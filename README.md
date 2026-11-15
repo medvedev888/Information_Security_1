@@ -1,102 +1,115 @@
 # Secure Notes API
 
-Лабораторная работа № 1 по информационной безопасности. REST API личных заметок: Java 21, Spring Boot 4.1.2, Spring Security, PostgreSQL 17. Миграции схемы выполняет Flyway.
+Защищённый REST API личных заметок (Java 21, Spring Boot 4.1.2, Spring Security, PostgreSQL 17). Лабораторная работа № 1.
 
 ## Запуск
 
-Требуются Java 21, Maven 3.6.3+, Docker с Compose и OpenSSL.
+Требуются Java 21, Maven и Docker Compose.
 
-```sh
+```bash
 sh scripts/init-env.sh
 sh scripts/start.sh
 ```
 
-API доступен на `http://localhost:8080`, PostgreSQL — на `localhost:5433`. Оба порта опубликованы только на loopback. Сгенерированные учётные данные находятся в локальном `.env`, исключённом из Git. Пользователь создаётся при первом запуске; изменение `DEMO_PASSWORD` не меняет пароль уже существующего пользователя. База сохраняется в Docker volume.
-
-```sh
-docker compose logs -f api
-docker compose stop
-```
+API и PostgreSQL запускаются в Docker. Локальные учётные данные находятся в `.env`, который исключён из Git. Пользователь создаётся при первом запуске. Изменение `DEMO_PASSWORD` в `.env` не меняет пароль существующего пользователя в БД.
 
 ## API
 
-Все тела запросов и ответов — JSON. Для примеров загрузите локальные переменные:
+Базовый URL: `http://localhost:8080`. Тела запросов и ответов — JSON.
 
-```sh
+### 1. `POST /auth/login`
+
+Аутентификация пользователя. Логин и пароль берутся из `DEMO_USERNAME` и `DEMO_PASSWORD` в локальном `.env`.
+
+```bash
 set -a
 . ./.env
 set +a
-curl -i http://localhost:8080/api/data
-curl -s http://localhost:8080/auth/login \
+curl -X POST http://localhost:8080/auth/login \
   -H 'Content-Type: application/json' \
   -d "{\"username\":\"$DEMO_USERNAME\",\"password\":\"$DEMO_PASSWORD\"}"
 ```
 
-`POST /auth/login` принимает `username` и `password`. Успех: `200`, поля `accessToken`, `tokenType` (`Bearer`), `expiresIn` (900 секунд). Неверные учётные данные: `401`. Скопируйте токен в переменную `TOKEN`:
+Ответ `200`:
 
-```sh
-TOKEN='полученный-accessToken'
-curl -i http://localhost:8080/api/data -H "Authorization: Bearer $TOKEN"
-curl -i http://localhost:8080/api/data \
-  -H "Authorization: Bearer $TOKEN" -H 'Content-Type: application/json' \
+```json
+{"accessToken":"<JWT>","tokenType":"Bearer","expiresIn":900}
+```
+
+Неверный логин или пароль — `401 Unauthorized`.
+
+### 2. `GET /api/data`
+
+Последние 100 заметок текущего пользователя. Доступ только с валидным JWT.
+
+```bash
+curl http://localhost:8080/api/data \
+  -H 'Authorization: Bearer <JWT>'
+```
+
+Пример ответа `200`:
+
+```json
+[{"id":1,"title":"Первая заметка","content":"Текст заметки","createdAt":"2026-11-15T10:00:00Z"}]
+```
+
+Без токена или с невалидным токеном — `401 Unauthorized`. Если заметок нет — `[]`.
+
+### 3. `POST /api/data`
+
+Создание собственной заметки. Заголовок — до 120 символов, текст — до 2000; пустые и пробельные значения запрещены. Неизвестные поля отклоняются.
+
+```bash
+curl -X POST http://localhost:8080/api/data \
+  -H 'Authorization: Bearer <JWT>' \
+  -H 'Content-Type: application/json' \
   -d '{"title":"Первая заметка","content":"Текст заметки"}'
 ```
 
-| Метод | Путь | Назначение | Ответ |
-|---|---|---|---|
-| POST | `/auth/login` | Вход | 200 / 400 / 401 |
-| GET | `/api/data` | Последние 100 собственных заметок | 200 / 401 |
-| POST | `/api/data` | Создание собственной заметки | 201 / 400 / 401 |
+Ответ `201` содержит созданную заметку с полями `id`, `title`, `content`, `createdAt`. Некорректные данные — `400 Bad Request`. Владелец определяется сервером из JWT.
 
-Заметка содержит `id`, `title`, `content`, `createdAt`. Заголовок — 1–120 символов, текст — 1–2000; пробельные строки запрещены. Неизвестные поля отклоняются. Владелец определяется сервером из JWT.
+## Меры защиты
 
-## Защита
+### SQL Injection
 
-- **SQLi:** `JdbcTemplate` передаёт значения через placeholders `?` и PreparedStatement. Пользовательский ввод не конкатенируется с SQL.
-- **XSS:** текст хранится без HTML-преобразований и экранируется при формировании ответа с `HtmlUtils.htmlEscape`. API возвращает `application/json`, устанавливает `nosniff` и CSP. Клиент должен выводить строки как текст и не декодировать сущности с последующей вставкой через `innerHTML`.
-- **Аутентификация:** bcrypt с cost 12 и случайной солью. В БД хранится только хэш. Одинаковая ошибка для неизвестного пользователя и неправильного пароля; проверка фиктивного хэша уменьшает различие во времени ответа.
-- **JWT:** подпись HS256, секрет не короче 32 случайных байтов; проверяются подпись, алгоритм, issuer, audience, subject и срок действия. JWT действует 15 минут, не содержит пароль. Проверка выполняется стандартным Bearer-фильтром Spring Security.
-- **Доступ:** запросы используют идентификатор владельца из проверенного JWT; клиент не может задать владельца. Сессий и cookie-аутентификации нет. CSRF отключён для API с явным Bearer-заголовком, CORS-разрешения не добавлены.
-- **Конфигурация:** секреты обязательны и поступают из окружения; `.env` исключён из Git и Docker build context. Ошибки не содержат SQL и stack trace. Контейнер API работает без root.
+`JdbcTemplate` использует параметризованные запросы с placeholders `?` и Prepared Statements. Пользовательский ввод не конкатенируется с SQL.
 
-Учебные ограничения: нет регистрации, обновления/отзыва токенов и ограничения попыток входа. HTTP используется для локального стенда; внешний доступ требует HTTPS, ограничения запросов и отдельного управления секретами. PostgreSQL-пользователь Compose владеет учебной БД; для production нужны раздельные роли для миграций и приложения.
+### XSS
 
-## Проверки
+Поля `title` и `content` экранируются через `HtmlUtils.htmlEscape` перед возвратом клиенту. API возвращает JSON и устанавливает `nosniff` и CSP. Например, `<script>` возвращается как `&lt;script&gt;`. Клиент должен выводить эти данные как текст.
 
-```sh
+### Аутентификация (Broken Authentication)
+
+- Пароли хранятся как bcrypt-хэши с cost 12 и случайной солью.
+- После успешного входа выдаётся JWT с подписью HS256 на 15 минут.
+- Bearer-фильтр Spring Security проверяет подпись, срок, issuer, audience и обязательные claims.
+- Доступ к заметкам ограничен владельцем из проверенного JWT. Cookies и серверные сессии для аутентификации не используются.
+
+Исключения SAST документированы в `spotbugs-exclude.xml`: информационный список endpoints и отключённый CSRF в stateless Bearer API. При добавлении cookie-аутентификации настройку CSRF нужно пересмотреть.
+
+## CI/CD (SAST / SCA)
+
+При push/PR в GitHub Actions запускаются:
+
+- **Тесты:** 6 интеграционных тестов на PostgreSQL.
+- **SAST:** SpotBugs + Find Security Bugs → `spotbugsXml.xml`, `spotbugs.html`.
+- **SCA:** OSV Scanner 2.7.0 проверяет прямые и транзитивные зависимости из Maven CycloneDX SBOM → `sca-report.json`, `sca-report.html`.
+
+Отчёты сохраняются как artifacts `tests-and-sast` и `sca-report`. Найденные OSV уязвимости и ошибки сканера блокируют сборку. Автоматический деплой не настроен.
+
+Локальные проверки:
+
+```bash
 sh scripts/test.sh
-python3 scripts/smoke.py
 bash scripts/sca.sh
 ```
 
-Интеграционные тесты используют настоящий PostgreSQL и отдельные тестовые учётные записи (`test_student`, `test_other`). Они удаляют только заметки этих учётных записей. Для отдельной тестовой БД задаются `TEST_DB_URL`, `TEST_DB_USERNAME`, `TEST_DB_PASSWORD`.
+Дополнительный Maven-профиль `sca` содержит OWASP Dependency-Check. Для него нужен `NVD_API_KEY` в окружении и доступный сервис NVD; основной OSV pipeline не зависит от NVD.
 
-`mvn verify` запускает тесты и SpotBugs с Find Security Bugs (категория SECURITY). Проверяются вход, bcrypt, отсутствие токена, неправильная подпись, истечение JWT, issuer/audience, SQLi, HTML-экранирование, валидация и изоляция пользователей. Отчёты: `target/surefire-reports/`, `target/spotbugsXml.xml`, `target/reports/spotbugs.html`.
+### Результаты проверок из Actions
 
-Основной SCA выполняет OSV Scanner 2.7.0. Скрипт `scripts/sca.sh` формирует CycloneDX SBOM из реально разрешённых Maven-зависимостей, включая транзитивные, и проверяет их по OSV. SHA256 скачанного сканера проверяется. Ключ NVD для этой проверки не нужен. Найденная уязвимость или ошибка сканера блокирует сборку. Отчёты: `target/sca-report.json`, `target/sca-report.html`; состав зависимостей: `target/bom.cdx.json`; лог: `target/sca.log`.
+[Workflow и история запусков](https://github.com/medvedev888/Information_Security_1/actions/workflows/ci.yml).
 
-Дополнительно сохранён Maven-профиль `sca` с OWASP Dependency-Check (`mvn -B -Psca -DskipTests verify`). Он использует `NVD_API_KEY` из окружения и зависит от доступности NVD; CVSS ≥ 7 и ошибки сканера блокируют сборку. Этот профиль не входит в основной CI. При требовании преподавателя использовать именно Dependency-Check его нужно отдельно успешно выполнить после восстановления NVD.
+[Успешный запуск тестов, SAST и SCA после обновления зависимостей](https://github.com/medvedev888/Information_Security_1/actions/runs/43705877307).
 
-В `spotbugs-exclude.xml` отдельно обоснованы два исключения: информационная инвентаризация Spring endpoints и предупреждение об отключении CSRF в `SecurityConfig`. Последнее применимо только при текущей схеме аутентификации через Bearer-заголовок без cookies, Basic и сессий; при изменении схемы его нужно пересмотреть. Остальные предупреждения категории SECURITY блокируют сборку.
-
-## CI
-
-`.github/workflows/ci.yml` запускается на push, pull request и вручную. Задание `build-and-sast` поднимает PostgreSQL, выполняет тесты и SAST. Отдельное задание `sca` проверяет зависимости. Отчёты сохраняются как artifacts даже при неуспешной проверке. Деплой не настроен.
-
-Ссылки на успешный запуск Actions и скриншоты отчётов добавляются после запуска workflow в удалённом репозитории. Локальная сборка не является подтверждением успешного выполнения GitHub Actions.
-
-Задание SCA запускает тот же OSV-скрипт, что используется локально. Artifacts `sca-report` содержат HTML, JSON, SBOM и лог проверки.
-
-## Устранение находок SCA
-
-При первоначальном OSV-аудите найдены известные уязвимости в зависимостях. Выполнено обновление Spring Boot 3.5.16 → 4.1.2 с переходом на Spring Framework 7 и Jackson 3. Тесты переведены на совместимые пакеты Spring Boot 4 и Jackson 3.
-
-| Компонент | До обновления | После обновления |
-|---|---|---|
-| Spring MVC | 6.2.19 | 7.0.10 |
-| Jackson core/databind | 2.21.4 | 3.1.7 |
-| Tomcat | 10.1.55 | 11.0.29 |
-| PostgreSQL JDBC | 42.7.11 | 42.7.14 |
-| Log4j API | 2.24.3 | 2.26.1 |
-
-Локально после обновления: 6 интеграционных тестов без ошибок, SAST без блокирующих находок с описанными выше исключениями, OSV проверил 71 зависимость без известных уязвимостей. Результат актуален на момент проверки; база уязвимостей изменяется.
+Скриншоты SAST/SCA дополняют HTML- и JSON-отчёты в artifacts соответствующего запуска.
