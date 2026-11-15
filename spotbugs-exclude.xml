@@ -1,0 +1,12 @@
+<FindBugsFilter>
+    <!-- Endpoint inventory is informational; authorization is tested for every API method. -->
+    <Match>
+        <Bug pattern="SPRING_ENDPOINT"/>
+    </Match>
+    <!-- This stateless API authenticates only explicit Bearer headers. No authentication
+         cookies, HTTP Basic, or server sessions are enabled. Revisit if that changes. -->
+    <Match>
+        <Class name="ru.itmo.secureapi.SecurityConfig"/>
+        <Bug pattern="SPRING_CSRF_PROTECTION_DISABLED"/>
+    </Match>
+</FindBugsFilter>
