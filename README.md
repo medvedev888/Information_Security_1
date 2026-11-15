@@ -112,4 +112,8 @@ bash scripts/sca.sh
 
 [Успешный запуск тестов, SAST и SCA после обновления зависимостей](https://github.com/medvedev888/Information_Security_1/actions/runs/43705877307).
 
-Скриншоты SAST/SCA дополняют HTML- и JSON-отчёты в artifacts соответствующего запуска.
+### Скриншоты отчётов из Actions
+
+![SAST — SpotBugs](docs/sast-spotbugs.png)
+
+![SCA — OSV Scanner](docs/sca-osv.png)
