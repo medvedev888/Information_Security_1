@@ -1,17 +1,30 @@
 #!/usr/bin/env bash
 set -euo pipefail
 cd "$(dirname "$0")/.."
-if [ ! -f .env ]; then
-  echo 'Create .env with scripts/init-env.sh and add NVD_API_KEY.' >&2
-  exit 1
+mkdir -p target/tools
+case "$(uname -s)/$(uname -m)" in
+  Darwin/arm64) platform=darwin_arm64; checksum=d4926ef8da134332543be276dff157e4c170f99ad91fc48e89448a8816bdf70b ;;
+  Linux/x86_64) platform=linux_amd64; checksum=160c6253e2922e9e0a6a9771c5c4c40a4b3c6090b34a3cdd5e80c96cc2e4218b ;;
+  *) echo 'Supported platforms: macOS arm64, Linux x86_64' >&2; exit 2 ;;
+esac
+scanner=target/tools/osv-scanner
+if [ ! -f "$scanner" ]; then
+  curl -fsSL --retry 3 "https://github.com/google/osv-scanner/releases/download/v2.7.0/osv-scanner_$platform" -o "$scanner"
 fi
-set -a
-source ./.env
-set +a
-if [ -z "${NVD_API_KEY:-}" ]; then
-  echo 'Add NVD_API_KEY to the local .env file.' >&2
-  exit 1
+printf '%s  %s\n' "$checksum" "$scanner" | shasum -a 256 -c -
+chmod +x "$scanner"
+# Maven exports resolved direct and transitive dependencies, not just pom declarations.
+mvn -B org.cyclonedx:cyclonedx-maven-plugin:2.9.1:makeAggregateBom -DoutputFormat=json -DoutputName=bom.cdx 2>&1 | tee target/sca.log
+result=0
+for format in json html; do
+  status=0
+  "$scanner" scan source --format "$format" --output-file "target/sca-report.$format" --lockfile target/bom.cdx.json >> target/sca.log 2>&1 || status=$?
+  if [ "$status" -ne 0 ]; then result="$status"; fi
+done
+cat target/sca.log
+if [ "$result" -eq 0 ]; then
+  echo 'SCA PASS: no known vulnerabilities found in resolved dependencies.'
+else
+  echo 'SCA FAILED: inspect target/sca-report.html and target/sca.log.' >&2
 fi
-mkdir -p target
-echo 'Running SCA; log: target/sca.log'
-mvn -B -Psca -DskipTests verify 2>&1 | tee target/sca.log
+exit "$result"
