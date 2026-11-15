@@ -14,7 +14,20 @@ fi
 printf '%s  %s\n' "$checksum" "$scanner" | shasum -a 256 -c -
 chmod +x "$scanner"
 # Maven exports resolved direct and transitive dependencies, not just pom declarations.
-mvn -B org.cyclonedx:cyclonedx-maven-plugin:2.9.1:makeAggregateBom -DoutputFormat=json -DoutputName=bom.cdx 2>&1 | tee target/sca.log
+# Retry only transient repository failures; analysis findings are never ignored.
+for attempt in 1 2 3; do
+  status=0
+  mvn -B -U org.cyclonedx:cyclonedx-maven-plugin:2.9.1:makeAggregateBom \
+    -DoutputFormat=json -DoutputName=bom.cdx > target/sca-maven.log 2>&1 || status=$?
+  cat target/sca-maven.log
+  if [ "$status" -eq 0 ]; then break; fi
+  if [ "$attempt" -eq 3 ] || ! grep -Eq '(status code: (429|502|503|504)|Too Many Requests|Connection reset|Read timed out)' target/sca-maven.log; then
+    exit "$status"
+  fi
+  echo "Temporary Maven repository failure; retry $((attempt + 1))/3."
+  sleep "$((attempt * 15))"
+done
+cp target/sca-maven.log target/sca.log
 result=0
 for format in json html; do
   status=0

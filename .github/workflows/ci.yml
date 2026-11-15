@@ -44,6 +44,7 @@ jobs:
             target/reports/spotbugs.html
           retention-days: 14
   sca:
+    needs: build-and-sast
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
@@ -64,4 +65,5 @@ jobs:
             target/sca-report.*
             target/bom.cdx.json
             target/sca.log
+            target/sca-maven.log
           retention-days: 14
