@@ -80,6 +80,7 @@
                     <excludeFilterFile>spotbugs-exclude.xml</excludeFilterFile>
                     <xmlOutput>true</xmlOutput>
                     <htmlOutput>true</htmlOutput>
+                    <sarifOutput>true</sarifOutput>
                     <skipEmptyReport>false</skipEmptyReport>
                     <plugins>
                         <plugin>

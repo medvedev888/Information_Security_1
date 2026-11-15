@@ -92,7 +92,7 @@ curl -X POST http://localhost:8080/api/data \
 При push/PR в GitHub Actions запускаются:
 
 - **Тесты:** 6 интеграционных тестов на PostgreSQL.
-- **SAST:** SpotBugs + Find Security Bugs → `spotbugsXml.xml`, `spotbugs.html`.
+- **SAST:** SpotBugs + Find Security Bugs → `spotbugsSarif.json`, `spotbugsXml.xml`, `spotbugs.html`.
 - **SCA:** OSV Scanner 2.7.0 проверяет прямые и транзитивные зависимости из Maven CycloneDX SBOM → `sca-report.json`, `sca-report.html`.
 
 Отчёты сохраняются как artifacts `tests-and-sast` и `sca-report`. Найденные OSV уязвимости и ошибки сканера блокируют сборку. Автоматический деплой не настроен.
